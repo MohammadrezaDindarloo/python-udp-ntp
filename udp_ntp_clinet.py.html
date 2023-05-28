@@ -1,0 +1,138 @@
+<html><head>
+<title>udp_ntp_clinet.py</title>
+<meta name="Generator" content="htmlizer/[Twisted, version 17.9.0]" />
+<link rel="alternate" href="udp_ntp_clinet.py" type="text/x-python" />
+
+</head>
+<body>
+<pre><span class="py-src-keyword">import</span> <span class="py-src-variable">time</span>
+<span class="py-src-keyword">import</span> <span class="py-src-variable">struct</span>
+<span class="py-src-keyword">import</span> <span class="py-src-variable">threading</span>
+<span class="py-src-keyword">import</span> <span class="py-src-variable">time</span>
+<span class="py-src-keyword">import</span> <span class="py-src-variable">numpy</span> <span class="py-src-keyword">as</span> <span class="py-src-variable">np</span>
+<span class="py-src-keyword">import</span> <span class="py-src-variable">multiprocessing</span>
+<span class="py-src-keyword">import</span> <span class="py-src-variable">subprocess</span>
+<span class="py-src-keyword">from</span> <span class="py-src-variable">src</span>.<span class="py-src-variable">utils</span> <span class="py-src-keyword">import</span> *
+
+<span class="py-src-keyword">from</span> <span class="py-src-variable">src</span>.<span class="py-src-variable">utils</span> <span class="py-src-keyword">import</span> *
+
+<span class="py-src-comment">#This is for sending the node's status to the ground station</span>
+
+<span class="py-src-keyword">def</span> <span class="py-src-identifier">adjtSpeed</span>(<span class="py-src-parameter">tick</span>):
+    <span class="py-src-string">'''A fuction that calls the adjtimex system command (install is with apt-get) to slow down or speed up the clock.'''</span>
+    <span class="py-src-keyword">if</span> <span class="py-src-variable">tick</span> &gt; <span class="py-src-number">10</span>:
+        <span class="py-src-variable">tick</span> = <span class="py-src-number">10</span>
+    <span class="py-src-keyword">elif</span> <span class="py-src-variable">tick</span> &lt;-<span class="py-src-number">10</span>:
+        <span class="py-src-variable">tick</span> = -<span class="py-src-number">10</span>
+    <span class="py-src-variable">subprocess</span>.<span class="py-src-variable">Popen</span>([<span class="py-src-string">'sudo'</span>, <span class="py-src-string">'/sbin/adjtimex'</span>, <span class="py-src-variable">f</span><span class="py-src-string">'-t'</span>, <span class="py-src-variable">f</span><span class="py-src-string">'{10000+tick}'</span>],<span class="py-src-variable">stdout</span>=<span class="py-src-variable">subprocess</span>.<span class="py-src-variable">PIPE</span>)
+
+<span class="py-src-keyword">def</span> <span class="py-src-identifier">setClock</span>(<span class="py-src-parameter">time_sec</span>, <span class="py-src-parameter">time_usec</span>):
+    <span class="py-src-string">'''A function that calls a custo C program that sets the current time'''</span>
+    <span class="py-src-variable">subprocess</span>.<span class="py-src-variable">Popen</span>([<span class="py-src-string">'sudo'</span>,  <span class="py-src-string">'/home/mohammad/Diamond_SF/python-udp-ntp/setclock'</span>, <span class="py-src-variable">f</span><span class="py-src-string">'{time_sec}'</span>, <span class="py-src-variable">f</span><span class="py-src-string">'{time_usec}'</span>],<span class="py-src-variable">stdout</span>=<span class="py-src-variable">subprocess</span>.<span class="py-src-variable">PIPE</span>)
+
+<span class="py-src-keyword">class</span> <span class="py-src-identifier">udpNtpClient</span>():
+    <span class="py-src-string">'''A class that implements the NTP client with serial interface. This has been tested with SiK serial radio modules'''</span>
+    <span class="py-src-keyword">def</span> <span class="py-src-identifier">__init__</span>(<span class="py-src-parameter">self</span>, <span class="py-src-parameter">tr_scale</span> = <span class="py-src-number">0.5</span>, <span class="py-src-parameter">server_port</span> = <span class="py-src-number">10000</span>, <span class="py-src-parameter">server_ip</span> = <span class="py-src-string">'192.168.1.9'</span>, <span class="py-src-parameter">local_port</span> = <span class="py-src-number">6000</span>,
+                                       <span class="py-src-parameter">transmit_rate</span> = <span class="py-src-number">2</span>, <span class="py-src-parameter">record</span> = <span class="py-src-parameter">False</span>, <span class="py-src-parameter">plot</span> = <span class="py-src-parameter">True</span>):
+        <span class="py-src-string">'''
+        The constructor of the class. With this, the NTP also starts
+        @param tr_scale:
+        The asymetry between transmission and reception of packets. It is 0.5 for symetrical communication
+        or it can be identified by recording a dataset (Explained later)
+        @param: port:
+        The serial ID of the serial port we want to use for the client (The port representing the radio module)
+        @param: baudRate:
+        The communication boadrate of the serial interface
+        @param: record:
+        A boolian flag that dteremins if we want the live plots and the dataset to be shown and recorded
+        @param: transmit_rate:
+        How often to we want to communicate with the server for synchronization
+        @param: plot:
+        Do we want a plot of the skew over time (for debugging)
+        '''</span>
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">transmit_rate</span> = <span class="py-src-variable">transmit_rate</span> <span class="py-src-comment">#The frequency of running the NTP stack (Querying time from the Server)</span>
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">link</span> = <span class="py-src-variable">wifiDataLink</span>(<span class="py-src-variable">server_ip</span>, <span class="py-src-variable">server_port</span>, <span class="py-src-variable">local_port</span>)
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">record</span> = <span class="py-src-variable">record</span>
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">running</span> = <span class="py-src-variable">True</span>
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">plot</span> = <span class="py-src-variable">plot</span>
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">receiveTread</span> = <span class="py-src-variable">threading</span>.<span class="py-src-variable">Thread</span>(<span class="py-src-variable">target</span>=<span class="py-src-variable">self</span>.<span class="py-src-variable">receivingThread</span>, <span class="py-src-variable">args</span>=())
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">queryThread</span> = <span class="py-src-variable">threading</span>.<span class="py-src-variable">Thread</span>(<span class="py-src-variable">target</span>=<span class="py-src-variable">self</span>.<span class="py-src-variable">queryThreadFunc</span>, <span class="py-src-variable">args</span>=())
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">tr_scale</span> = <span class="py-src-variable">tr_scale</span> <span class="py-src-comment"># The realtive scale between transmitting a packet and receiving it</span>
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">moving_window</span> = []
+        <span class="py-src-comment"># For identification purposes, we can record the timestamps used for running the NTP algorithm</span>
+        <span class="py-src-keyword">if</span> <span class="py-src-variable">self</span>.<span class="py-src-variable">record</span>:
+            <span class="py-src-variable">self</span>.<span class="py-src-variable">dataset</span> = []
+
+
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">receiveTread</span>.<span class="py-src-variable">start</span>()
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">queryThread</span>.<span class="py-src-variable">start</span>()
+
+    <span class="py-src-keyword">def</span> <span class="py-src-identifier">receivingThread</span>(<span class="py-src-parameter">self</span>):
+        <span class="py-src-string">'''A thread that handles the responses from the server'''</span>
+        <span class="py-src-keyword">while</span> <span class="py-src-variable">self</span>.<span class="py-src-variable">running</span>:
+            <span class="py-src-variable">data</span>, <span class="py-src-variable">addr</span> = <span class="py-src-variable">self</span>.<span class="py-src-variable">link</span>.<span class="py-src-variable">getData</span>(<span class="py-src-number">24</span>)
+            <span class="py-src-keyword">if</span> <span class="py-src-variable">len</span>(<span class="py-src-variable">data</span>) == <span class="py-src-number">24</span>:
+                <span class="py-src-variable">self</span>.<span class="py-src-variable">stamp4</span> = <span class="py-src-variable">time</span>.<span class="py-src-variable">time_ns</span>() <span class="py-src-comment">#Response time stamp</span>
+                <span class="py-src-variable">self</span>.<span class="py-src-variable">stamp1</span>, <span class="py-src-variable">self</span>.<span class="py-src-variable">stamp2</span>, <span class="py-src-variable">self</span>.<span class="py-src-variable">stamp3</span> = <span class="py-src-variable">struct</span>.<span class="py-src-variable">unpack</span>(<span class="py-src-string">'3Q'</span>,<span class="py-src-variable">data</span>)
+                <span class="py-src-comment">#compute the round trip time</span>
+                <span class="py-src-comment">#(the time that takes for the packet to get to the server and for the response to be received)</span>
+                <span class="py-src-variable">delta</span> = <span class="py-src-variable">np</span>.<span class="py-src-variable">array</span>((<span class="py-src-variable">self</span>.<span class="py-src-variable">stamp4</span>-<span class="py-src-variable">self</span>.<span class="py-src-variable">stamp1</span>)-(<span class="py-src-variable">self</span>.<span class="py-src-variable">stamp3</span>-<span class="py-src-variable">self</span>.<span class="py-src-variable">stamp2</span>))
+                <span class="py-src-comment">#The estimated server time at the instance of receiving the response from the server (stamp4)</span>
+                <span class="py-src-variable">server_time</span>  = <span class="py-src-variable">self</span>.<span class="py-src-variable">stamp3</span> + <span class="py-src-variable">self</span>.<span class="py-src-variable">tr_scale</span>*<span class="py-src-variable">delta</span>
+                <span class="py-src-comment">#The clock skew of the client with respect to the server</span>
+                <span class="py-src-variable">skew_ns</span> = (<span class="py-src-variable">self</span>.<span class="py-src-variable">stamp3</span>-<span class="py-src-variable">self</span>.<span class="py-src-variable">stamp4</span>) + <span class="py-src-variable">self</span>.<span class="py-src-variable">tr_scale</span>*<span class="py-src-variable">delta</span>
+                <span class="py-src-comment">#print(f'skew_ns is {skew_ns}')</span>
+                <span class="py-src-comment">#if the clock skew is larger than 100 ms, forcefully set the clock to the server time</span>
+                <span class="py-src-keyword">if</span> <span class="py-src-keyword">not</span> <span class="py-src-variable">self</span>.<span class="py-src-variable">record</span>:
+                    <span class="py-src-keyword">if</span> <span class="py-src-variable">abs</span>(<span class="py-src-variable">skew_ns</span>*<span class="py-src-number">1e-6</span>) &gt; <span class="py-src-number">100</span>:
+                        <span class="py-src-keyword">print</span>(<span class="py-src-variable">f</span><span class="py-src-string">'Too large time shift ({abs(skew_ns*1e-6)} ms), Setting the time'</span>)
+                        <span class="py-src-variable">setClock</span>(<span class="py-src-variable">int</span>(<span class="py-src-variable">server_time</span>*<span class="py-src-number">1e-9</span>),<span class="py-src-variable">int</span>((<span class="py-src-variable">server_time</span>*<span class="py-src-number">1e-9</span>-<span class="py-src-variable">int</span>(<span class="py-src-variable">server_time</span>*<span class="py-src-number">1e-9</span>))*<span class="py-src-number">1e6</span>))
+                <span class="py-src-comment">#Store the skew valu in the moving average list (for reducing estimation noise)</span>
+                <span class="py-src-variable">self</span>.<span class="py-src-variable">moving_window</span>.<span class="py-src-variable">append</span>(<span class="py-src-variable">skew_ns</span>*<span class="py-src-number">1e-9</span>)
+                <span class="py-src-comment">#when the communication link is inconsistent, we can have outlier estimates added to the</span>
+                <span class="py-src-comment">#moving averaging list. In such cases, the variance grows large thus, we should discard the</span>
+                <span class="py-src-comment">#list and start again</span>
+                <span class="py-src-keyword">if</span> <span class="py-src-variable">np</span>.<span class="py-src-variable">var</span>(<span class="py-src-variable">self</span>.<span class="py-src-variable">moving_window</span>)&gt;<span class="py-src-number">1</span>:
+                    <span class="py-src-keyword">print</span>(<span class="py-src-string">'Inconsistent communicaiton, clearning the averaging buffer...'</span>)
+                    <span class="py-src-variable">self</span>.<span class="py-src-variable">moving_window</span> = []
+                <span class="py-src-comment">#If there are enough samples in the list, bagin the clock adjustment process by</span>
+                <span class="py-src-comment">#Slowing down the system clock when we're ahead of the server clock and speeding it up</span>
+                <span class="py-src-comment">#when we are behind.</span>
+                <span class="py-src-keyword">if</span> <span class="py-src-variable">len</span>(<span class="py-src-variable">self</span>.<span class="py-src-variable">moving_window</span>) &gt; <span class="py-src-number">100</span>:
+                    <span class="py-src-variable">skew</span> = <span class="py-src-variable">np</span>.<span class="py-src-variable">mean</span>(<span class="py-src-variable">self</span>.<span class="py-src-variable">moving_window</span>)
+                    <span class="py-src-variable">skew_us</span> = <span class="py-src-variable">int</span>((<span class="py-src-variable">skew</span>-<span class="py-src-variable">int</span>(<span class="py-src-variable">skew</span>))*<span class="py-src-number">1e6</span>)
+                    <span class="py-src-comment">#print(skew_us)</span>
+
+                    <span class="py-src-keyword">if</span> <span class="py-src-keyword">not</span> <span class="py-src-variable">self</span>.<span class="py-src-variable">record</span>:
+                        <span class="py-src-variable">error_ms</span> = <span class="py-src-variable">skew_us</span>/<span class="py-src-number">1000.0</span>
+                        <span class="py-src-comment">#error times a Kp compensation gain</span>
+                        <span class="py-src-variable">tick</span> = <span class="py-src-variable">skew_us</span>*<span class="py-src-number">0.0001</span>
+                        <span class="py-src-keyword">print</span>(<span class="py-src-variable">tick</span>)
+                        <span class="py-src-variable">adjtSpeed</span>(<span class="py-src-variable">tick</span>)
+                        <span class="py-src-comment">#remove the oldest sample from the list</span>
+                        <span class="py-src-variable">self</span>.<span class="py-src-variable">last_hypervisor_state_update</span> = <span class="py-src-variable">time</span>.<span class="py-src-variable">time</span>()
+
+                    <span class="py-src-keyword">del</span>(<span class="py-src-variable">self</span>.<span class="py-src-variable">moving_window</span>[<span class="py-src-number">0</span>])
+
+                <span class="py-src-comment">#record the raw stamps for calibration purposes</span>
+                <span class="py-src-keyword">if</span> <span class="py-src-variable">self</span>.<span class="py-src-variable">record</span>:
+                    <span class="py-src-variable">self</span>.<span class="py-src-variable">dataset</span>.<span class="py-src-variable">append</span>([<span class="py-src-variable">self</span>.<span class="py-src-variable">stamp1</span>, <span class="py-src-variable">self</span>.<span class="py-src-variable">stamp2</span>, <span class="py-src-variable">self</span>.<span class="py-src-variable">stamp3</span>, <span class="py-src-variable">self</span>.<span class="py-src-variable">stamp4</span>])
+
+    <span class="py-src-keyword">def</span> <span class="py-src-identifier">queryThreadFunc</span>(<span class="py-src-parameter">self</span>):
+        <span class="py-src-string">'''A thread that periodically transmits requests to the server '''</span>
+        <span class="py-src-keyword">while</span> <span class="py-src-variable">self</span>.<span class="py-src-variable">running</span>:
+            <span class="py-src-variable">self</span>.<span class="py-src-variable">link</span>.<span class="py-src-variable">transmitData</span>([<span class="py-src-variable">time</span>.<span class="py-src-variable">time_ns</span>()], <span class="py-src-variable">format</span> = <span class="py-src-string">'Q'</span>)
+
+            <span class="py-src-variable">time</span>.<span class="py-src-variable">sleep</span>( <span class="py-src-number">1.0</span>/<span class="py-src-variable">self</span>.<span class="py-src-variable">transmit_rate</span> )
+
+
+
+    <span class="py-src-keyword">def</span> <span class="py-src-identifier">clientStop</span>(<span class="py-src-parameter">self</span>):
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">running</span> = <span class="py-src-variable">False</span>
+<span class="py-src-comment">#         self.receiveTread.join()</span>
+<span class="py-src-comment">#         self.transmitTread.join()</span>
+        <span class="py-src-variable">self</span>.<span class="py-src-variable">link</span>.<span class="py-src-variable">socket</span>.<span class="py-src-variable">close</span>()
+
+<span class="py-src-variable">client</span> = <span class="py-src-variable">udpNtpClient</span>(<span class="py-src-variable">tr_scale</span> = <span class="py-src-number">0.41499400826162136</span>)
+</pre>
+</body>
